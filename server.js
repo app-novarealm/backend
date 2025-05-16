@@ -412,15 +412,18 @@ passport.use(
         let user;
 
         if (existingUser.rowCount === 0) {
+          let point;
+          const users = await pool.query("SELECT email FROM users")
+          users.rowCount > 500 ? point = 30 : point = 250;
 
           const newUser = await pool.query(
-            "INSERT INTO users (email, name, authenticator, invited_by) VALUES ($1, $2, $3, $4) RETURNING *",
-            [profile.emails[0].value, profile.displayName, "google", referredBy]
+            "INSERT INTO users (email, name, authenticator, invited_by, point) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+            [profile.emails[0].value, profile.displayName, "google", referredBy, point]
           );
           await pool.query(`INSERT INTO wallet ( user_id ) VALUES ($1)`, [newUser.rows[0].id]);
           await pool.query("INSERT INTO daily_reward (user_id) VALUES ($1)", [newUser.rows[0].id]);
           await pool.query("INSERT INTO referral_bonus (user_id) VALUES ($1)", [newUser.rows[0].id]);
-          await pool.query("UPDATE users SET referral_number = referral_number + 1, point = point + 500 WHERE referral_code = $1", [referredBy]);
+          await pool.query("UPDATE users SET referral_number = referral_number + 1, point = point + 50 WHERE referral_code = $1", [referredBy]);
 
           user = newUser.rows[0]
 
@@ -510,11 +513,15 @@ app.post("/verify-email", async (req, res) => {
     }
 
     const { hashed_password, invited_by } = result.rows[0];
+    let point;
+    const users = await pool.query("SELECT email FROM users")
+    users.rowCount > 500 ? point = 30 : point = 250;
+
     const user = await client.query(`
-      INSERT INTO users (email, password, name, authenticator, invited_by)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO users (email, password, name, authenticator, invited_by, point)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
-    `, [email, hashed_password, name, 'email', invited_by]);
+    `, [email, hashed_password, name, 'email', invited_by, point]);
 
     const referralCode = nanoid(6) + user.rows[0].id.toString();
     // const randomAvatar = `https://avatar.iran.liara.run/public/${Math.floor(Math.random() * 50) + 1}`;
@@ -525,7 +532,7 @@ app.post("/verify-email", async (req, res) => {
     await client.query("INSERT INTO wallet (address, user_id) VALUES ($1, $2)", [null, user.rows[0].id]);
     await client.query("INSERT INTO daily_reward (user_id) VALUES ($1)", [user.rows[0].id]);
     await client.query("DELETE FROM pending_verifications WHERE email = $1", [email]);
-    await client.query("update users SET referral_number = referral_number + 1, point = point + 500 WHERE referral_code = $1", [invited_by]);
+    await client.query("update users SET referral_number = referral_number + 1, point = point + 50 WHERE referral_code = $1", [invited_by]);
     await client.query("INSERT INTO referral_bonus (user_id) VALUES ($1)", [user.rows[0].id])
 
     await client.query("COMMIT");
@@ -808,7 +815,7 @@ app.post("/verify-transaction", verifyAccessToken, async (req, res) => {
       return res.status(400).json({ success: false, message: "❌ No matching transfer instruction" });
     }
     fromPubkey = transferIx.parsed.info.source
-    
+
     // 4) Verify the amount
     const lamports = transferIx.parsed.info.lamports;
     const sol = lamports / 1e9;
@@ -867,7 +874,8 @@ app.post("/claim-daily-reward", verifyAccessToken, async (req, res) => {
     const claimedUser = await pool.query("SELECT claimed, streak FROM daily_reward WHERE user_id = $1", [userId]);
     if (!claimedUser.rows[0]?.claimed) {
       await pool.query("UPDATE daily_reward SET claimed = $1 WHERE user_id = $2", [true, userId]);
-      const updatedPoint = claimedUser.rows[0].streak * 1000;
+      let updatedPoint;
+      claimedUser.rows[0].streak < 5 ? updatedPoint = claimedUser.rows[0].streak * 5 : updatedPoint = 25
       await pool.query("UPDATE users SET point = point + $1 WHERE id = $2", [updatedPoint, userId]);
     }
 
